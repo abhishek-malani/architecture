@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Energy App Architecture — CSV Ingestion</title>
+<style>
+  body{margin:0;font:14px/1.55 ui-sans-serif,system-ui,Segoe UI,Roboto,Inter,Arial;background:#0b1220;color:#e5e7eb}
+  header{padding:22px;background:#111827;border-bottom:1px solid #1f2937}
+  h1{margin:0 0 4px;font-size:22px}.sub{color:#94a3b8;font-size:13px}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px}
+  .card{background:#0e1629;border:1px solid #1f2937;border-radius:14px;padding:14px;margin:12px 0}
+  svg{max-width:100%}
+  .zone{fill:#0a0f1e;stroke:#1f2937;stroke-width:1.2;rx:12;ry:12}
+  .box{fill:#0f1a30;stroke:#22304a;rx:10;ry:10;cursor:pointer}
+  .t{font:13px ui-sans-serif,Segoe UI,Roboto;fill:#e5e7eb;pointer-events:none}
+  .s{font:12px ui-sans-serif,Segoe UI,Roboto;fill:#9ca3af;pointer-events:none}
+  .arrow{stroke:#60a5fa;stroke-width:1.8;marker-end:url(#marr)}
+  .arrowg{stroke:#34d399;stroke-width:1.8;marker-end:url(#marr)}
+  .tooltip{
+    position:fixed;left:0;top:0;transform:translate(-50%,-120%);
+    background:#0b1324;border:1px solid #1f2b45;border-radius:10px;
+    padding:10px 12px;max-width:380px;color:#e5e7eb;display:none;z-index:1000;
+    box-shadow:0 16px 40px rgba(0,0,0,.45)
+  }
+  .tooltip b{color:#cde1ff}.tooltip .why{color:#a7f3d0;margin-top:6px}
+  .hint{font-size:11px;color:#94a3b8;margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>CSV Ingestion Architecture</h1>
+  <div class="sub">Email/OneDrive → Intake → MinIO (raw) → Airflow/Temporal → ClickHouse (clean) → KPIs/anomalies → Insights API & LLM Copilot.</div>
+</header>
+
+<main class="wrap">
+  <div class="card">
+    <svg viewBox="0 0 1180 620">
+      <defs>
+        <marker id="marr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+          <path d="M0 0 L10 5 L0 10 Z" fill="#60a5fa"/>
+        </marker>
+      </defs>
+
+      <!-- Zones -->
+      <rect x="16" y="16" width="820" height="588" class="zone"/>
+      <text x="28" y="40" class="t" style="font-weight:600">Z1 · Data Center Secure Zone</text>
+      <rect x="856" y="16" width="308" height="588" class="zone"/>
+      <text x="868" y="40" class="t" style="font-weight:600">Z2 · App Zone</text>
+
+      <!-- External sources -->
+      <g class="tile" data-title="Email Intake" data-body="Operators forward CSVs as attachments to a shared mailbox. An intake agent saves them to the watched folder.">
+        <rect x="32" y="92" width="220" height="70" class="box"/>
+        <text x="48" y="116" class="t">Email (attachments)</text><text x="48" y="136" class="s">csv-intake@org</text>
+      </g>
+
+      <g class="tile" data-title="OneDrive Drop" data-body="Operators upload CSVs to a OneDrive folder. Intake agent fetches them via Microsoft Graph.">
+        <rect x="280" y="92" width="230" height="70" class="box"/>
+        <text x="296" y="116" class="t">OneDrive (Drop folder)</text><text x="296" y="136" class="s">/DataCenter/CSV</text>
+      </g>
+
+      <!-- Intake -->
+      <g class="tile" data-title="CSV Intake Agent" data-body="Watches email/OneDrive, renames and timestamps files, computes checksums, writes to MinIO, and triggers ETL.">
+        <rect x="540" y="92" width="276" height="70" class="box"/>
+        <text x="556" y="116" class="t">CSV Intake Agent</text><text x="556" y="136" class="s">normalize + checksum</text>
+      </g>
+
+      <!-- Storage/ETL -->
+      <g class="tile" data-title="MinIO — Raw Landing" data-body="Immutable landing zone for audit and replay. Stores CSVs and a manifest (batch id, checksum, source).">
+        <rect x="32" y="200" width="220" height="70" class="box"/>
+        <text x="48" y="224" class="t">MinIO (Landing)</text><text x="48" y="244" class="s">raw CSV + manifest</text>
+      </g>
+
+      <g class="tile" data-title="Airflow / Temporal" data-body="ETL DAG validates schema/units, dedups by (point_id, ts), resamples to 1-min, then writes to ClickHouse staging and promotes to clean.">
+        <rect x="280" y="200" width="230" height="70" class="box"/>
+        <text x="296" y="224" class="t">Airflow / Temporal</text><text x="296" y="244" class="s">ETL ingest</text>
+      </g>
+
+      <g class="tile" data-title="ClickHouse — Clean" data-body="Curated telemetry (1-minute). Primary truth for KPIs, anomalies, API and LLM tools.">
+        <rect x="540" y="200" width="276" height="70" class="box"/>
+        <text x="556" y="224" class="t">ClickHouse (clean)</text><text x="556" y="244" class="s">telemetry_1m</text>
+      </g>
+
+      <g class="tile" data-title="ClickHouse — KPIs & Anomalies" data-body="Materialized views/jobs compute PUE, cooling kW, UPS efficiency, ΔT; detectors write compact anomaly facts.">
+        <rect x="32" y="310" width="220" height="70" class="box"/>
+        <text x="48" y="334" class="t">ClickHouse KPIs</text><text x="48" y="354" class="s">kpis_5m, anomalies</text>
+      </g>
+
+      <g class="tile" data-title="LLM Copilot" data-body="Local LLM (Ollama/vLLM) with Tools. Queries ClickHouse (clean/KPIs), renders plots, and explains anomalies.">
+        <rect x="280" y="310" width="230" height="70" class="box"/>
+        <text x="296" y="334" class="t">LLM Copilot</text><text x="296" y="354" class="s">Ollama/vLLM</text>
+      </g>
+
+      <g class="tile" data-title="Insights API (read-only)" data-body="Exposes only aggregates (KPIs, anomaly facts, plot artifacts) to the app using JWT + mTLS. No raw time-series leaves Z1.">
+        <rect x="540" y="310" width="276" height="70" class="box"/>
+        <text x="556" y="334" class="t">Insights API</text><text x="556" y="354" class="s">aggregates only</text>
+      </g>
+
+      <!-- App -->
+      <g class="tile" data-title="Lovable Frontend" data-body="Ops UI & Copilot chat. Calls Insights API with Supabase-issued JWT.">
+        <rect x="872" y="128" width="276" height="90" class="box"/>
+        <text x="888" y="154" class="t">Lovable Frontend</text><text x="888" y="174" class="s">Ops UI</text>
+      </g>
+
+      <g class="tile" data-title="Supabase" data-body="Auth, roles, saved views; issues JWTs for Insights API.">
+        <rect x="872" y="252" width="276" height="90" class="box"/>
+        <text x="888" y="278" class="t">Supabase</text><text x="888" y="298" class="s">Auth • Views</text>
+      </g>
+
+      <!-- FLOW ARROWS (corrected) -->
+      <!-- Sources -> Intake -->
+      <path d="M252 127 L540 127" class="arrow"/>
+      <path d="M32 127 L540 127" class="arrow" style="visibility:hidden"/> <!-- keeps spacing consistent -->
+      <!-- Intake -> MinIO -->
+      <path d="M678 127 L142 200" class="arrow"/>
+      <!-- MinIO -> Airflow -->
+      <path d="M252 235 L280 235" class="arrow"/>
+      <!-- Airflow -> ClickHouse (clean) -->
+      <path d="M510 235 L540 235" class="arrow"/>
+      <!-- ClickHouse (clean) -> KPIs -->
+      <path d="M678 235 L142 345" class="arrow"/>
+      <!-- ClickHouse (clean) -> LLM -->
+      <path d="M678 235 L395 345" class="arrow"/>
+      <!-- KPIs -> Insights API -->
+      <path d="M252 345 L540 345" class="arrow"/>
+      <!-- Insights API -> Lovable (App Zone) -->
+      <path d="M816 345 L872 173" class="arrowg"/>
+      <!-- Supabase -> Insights (JWT/auth) -->
+      <path d="M1010 297 L816 345" class="arrowg"/>
+    </svg>
+  </div>
+</main>
+
+<div id="tooltip" class="tooltip" role="dialog" aria-live="polite"></div>
+<script>
+(function(){
+  const tip=document.getElementById("tooltip"); let pinned=false;
+  function show(e,el){
+    const title=el.getAttribute("data-title")||"", body=el.getAttribute("data-body")||"";
+    tip.innerHTML=`<b>${title}</b><div style="margin-top:4px">${body}</div><div class="hint">Click to pin/unpin</div>`;
+    tip.style.left=e.clientX+"px"; tip.style.top=e.clientY+"px"; tip.style.display="block";
+  }
+  function hide(){ if(!pinned) tip.style.display="none"; }
+  document.querySelectorAll(".tile").forEach(el=>{
+    el.addEventListener("mousemove",e=>!pinned&&show(e,el));
+    el.addEventListener("mouseenter",e=>!pinned&&show(e,el));
+    el.addEventListener("mouseleave",hide);
+    el.addEventListener("click",e=>{ pinned=!pinned; pinned?show(e,el):hide(); e.stopPropagation(); });
+  });
+  document.addEventListener("click",e=>{ if(!(e.target).closest(".tile")){ pinned=false; hide(); } });
+})();
+</script>
+</body>
+</html>
