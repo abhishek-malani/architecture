@@ -1,0 +1,214 @@
+# Create an updated HTML with interactive tooltips for every tile (hover or click)
+html = r"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Energy App Architecture — Streaming/API Scenario (with Tooltips)</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#0e1629; --ink:#e5e7eb; --muted:#94a3b8;
+    --line:#1f2937; --accent:#60a5fa; --ok:#34d399; --warn:#f59e0b;
+  }
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;font:14.5px/1.55 ui-sans-serif,system-ui,Segoe UI,Roboto,Inter,Arial;color:var(--ink);background:linear-gradient(180deg,#0a0f1e,#0b1220 20%,#0a0f1e 100%);}
+  header{padding:22px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0b1220,#0e1426)}
+  h1{margin:0 0 4px;font-size:22px} .sub{color:var(--muted);font-size:13px}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0;box-shadow:0 16px 40px rgba(0,0,0,.35)}
+  h2{margin:6px 0 12px;font-size:18px}
+  .legend{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+  .pill{display:inline-block;padding:3px 8px;border-radius:999px;border:1px solid #22304a;background:#0b1220;color:#a5c1ff;font-size:12px}
+  .small{font-size:13px;color:var(--muted)}
+  .hr{height:1px;background:#1f2937;margin:14px 0}
+  /* SVG shared */
+  .zone{fill:#0a0f1e;stroke:#1f2937;stroke-width:1.2;rx:12;ry:12}
+  .box{fill:#0f1a30;stroke:#22304a;stroke-width:1.2;rx:10;ry:10;cursor:pointer}
+  .box2{fill:#0f1a24;stroke:#1f3b33;stroke-width:1.2;rx:10;ry:10;cursor:pointer}
+  .t{font:13px ui-sans-serif,Segoe UI,Roboto;fill:#e5e7eb;pointer-events:none}
+  .s{font:12px ui-sans-serif,Segoe UI,Roboto;fill:#9ca3af;pointer-events:none}
+  .arrow{stroke:#5f84ff;stroke-width:1.8;marker-end:url(#marr)}
+  .arrowg{stroke:#34d399;stroke-width:1.8;marker-end:url(#marr)}
+  .arrowi{stroke:#94a3b8;stroke-width:1.6;marker-end:url(#marr)}
+  /* Tooltip */
+  .tooltip{
+    position:fixed; left:0; top:0; transform:translate(-50%,-120%);
+    background:#0b1324; border:1px solid #1f2b45; border-radius:10px;
+    padding:10px 12px; max-width:360px; color:#e5e7eb; z-index:1000;
+    box-shadow:0 16px 40px rgba(0,0,0,.45); display:none;
+  }
+  .tooltip b{color:#cde1ff}
+  .tooltip .why{color:#a7f3d0}
+  .tooltip .muted{color:#94a3b8}
+  .tooltip .kbd{background:#0c1a2e;border:1px solid #1f2b45;border-radius:6px;padding:0 .35rem}
+  .hint{margin-top:8px;font-size:12px;color:#94a3b8}
+</style>
+</head>
+<body>
+<header class="wrap">
+  <h1>Energy App Architecture — Streaming/API Scenario</h1>
+  <div class="sub">Hover or click tiles for details. Lovable + Supabase app (Zone 2) uses on‑prem analytics &amp; LLM copilot (Zone 1). Raw telemetry never leaves the data center.</div>
+</header>
+
+<main class="wrap">
+
+  <section class="card">
+    <h2>Architecture Overview (Two Zones)</h2>
+    <div class="legend">
+      <span class="pill">Z1: Data Center Secure Zone</span>
+      <span class="pill">Z2: App Zone (Lovable + Supabase)</span>
+      <span class="pill">Blue → ingest/ETL • Green → read/serve</span>
+    </div>
+
+    <svg id="arch" viewBox="0 0 1180 640" width="100%" height="auto" role="img" aria-label="Architecture Diagram">
+      <defs>
+        <marker id="marr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+          <path d="M0 0 L10 5 L0 10 Z" fill="#5f84ff"/>
+        </marker>
+      </defs>
+
+      <!-- Zones -->
+      <rect x="16" y="16" width="820" height="608" class="zone"/>
+      <text x="28" y="40" class="t" style="font-weight:600">Z1 · Data Center Secure Zone</text>
+      <text x="28" y="60" class="s">Kafka/Redpanda, MinIO, ClickHouse, Airflow/Temporal, LLM + Tools, Insights API</text>
+
+      <rect x="856" y="16" width="308" height="608" class="zone"/>
+      <text x="868" y="40" class="t" style="font-weight:600">Z2 · App Zone</text>
+      <text x="868" y="60" class="s">Lovable frontend + Supabase (auth/metadata)</text>
+
+      <!-- Z1 components -->
+      <g class="tile" data-title="Vendor API Gateway" data-body="Secure export endpoint provided by the data center (BMS/DCIM). We pull telemetry via HTTPS with mutual TLS and signed service credentials." data-why="Ensures trustworthy, authenticated data ingress without exposing raw systems.">
+        <rect x="32"  y="92" width="220" height="70" class="box"/>
+        <text x="48" y="116" class="t">Vendor API Gateway</text><text x="48" y="136" class="s">BMS/DCIM export • mTLS</text>
+      </g>
+
+      <g class="tile" data-title="Kafka / Redpanda" data-body="Message bus for all incoming telemetry, partitioned by subsystem (power, CRAC, UPS, genset…). Schema Registry enforces Avro/Protobuf contracts." data-why="Decouples producers/consumers, buffers bursts, and gives replay capability.">
+        <rect x="280" y="84" width="230" height="86" class="box"/>
+        <text x="296" y="108" class="t">Kafka / Redpanda</text><text x="296" y="128" class="s">topics: power, crac, ups…</text>
+      </g>
+
+      <g class="tile" data-title="ClickHouse (landing &amp; clean)" data-body="Time‑series OLAP store. Landing tables receive streams; ETL writes 1‑minute clean, de‑duplicated, unit‑harmonized series." data-why="Ultra‑fast rollups and joins for dashboards, ML features, and APIs.">
+        <rect x="540" y="80" width="276" height="96" class="box"/>
+        <text x="556" y="106" class="t">ClickHouse (landing &amp; clean)</text><text x="556" y="126" class="s">raw_clean, window_stats</text>
+      </g>
+
+      <g class="tile" data-title="MinIO (Raw Parquet)" data-body="Immutable object storage for raw events written hourly from Kafka sinks." data-why="Chain‑of‑custody, backfills, and reproducibility for audits.">
+        <rect x="32"  y="192" width="220" height="78" class="box"/>
+        <text x="48" y="216" class="t">MinIO (Raw Parquet)</text><text x="48" y="236" class="s">Immutable • Replay</text>
+      </g>
+
+      <g class="tile" data-title="Airflow / Temporal" data-body="Schedules ETL: deduplication, unit coercion, resampling, KPI computation, and anomaly detectors." data-why="Reliable, versioned pipelines with retries and backfills.">
+        <rect x="280" y="192" width="230" height="78" class="box"/>
+        <text x="296" y="216" class="t">Airflow / Temporal</text><text x="296" y="236" class="s">ETL • Rollups • Detectors</text>
+      </g>
+
+      <g class="tile" data-title="ClickHouse KPIs" data-body="Curated aggregates: PUE, IT kW, facility kW, cooling kW, UPS efficiency, ΔT; anomaly facts table for fast lookups." data-why="Tiny result sets for fast APIs; keeps raw data private.">
+        <rect x="540" y="200" width="276" height="70" class="box"/>
+        <text x="556" y="224" class="t">ClickHouse KPIs</text><text x="556" y="244" class="s">kpis_5m, anomalies</text>
+      </g>
+
+      <g class="tile" data-title="Qdrant / pgvector" data-body="Vector index of SOPs, playbooks, maintenance notes used by the LLM for RAG." data-why="Grounds explanations and next‑steps in your docs.">
+        <rect x="32"  y="300" width="220" height="70" class="box"/>
+        <text x="48" y="324" class="t">Qdrant / pgvector</text><text x="48" y="344" class="s">SOPs/Playbooks (RAG)</text>
+      </g>
+
+      <g class="tile" data-title="Feast + Redis (optional)" data-body="Feature store (offline in ClickHouse, optional online in Redis) for low‑latency model features." data-why="Consistency between training and serving.">
+        <rect x="280" y="300" width="230" height="70" class="box"/>
+        <text x="296" y="324" class="t">Feast + Redis (optional)</text><text x="296" y="344" class="s">features online/offline</text>
+      </g>
+
+      <g class="tile" data-title="LLM Copilot" data-body="Local LLM (Ollama/vLLM) with Tools API + sandboxed Python. Pulls numbers from ClickHouse, renders plots, and explains anomalies." data-why="Natural‑language insights without exposing raw telemetry outside Z1.">
+        <rect x="540" y="300" width="276" height="140" class="box"/>
+        <text x="556" y="324" class="t">LLM Copilot</text><text x="556" y="344" class="s">Ollama/vLLM + Tools API</text><text x="556" y="364" class="s">Python Runner (plots)</text>
+      </g>
+
+      <g class="tile" data-title="Insights API (read‑only)" data-body="Serves KPIs, anomaly facts, and plot artifacts to the app with JWT + mTLS. No raw time‑series exposed." data-why="Clear boundary: only safe, aggregate data leaves Z1.">
+        <rect x="540" y="460" width="276" height="70" class="box"/>
+        <text x="556" y="484" class="t">Insights API (read-only)</text><text x="556" y="504" class="s">Aggregates • KPIs • anomalies</text>
+      </g>
+
+      <g class="tile" data-title="Prometheus + Grafana" data-body="Monitors ingestion lag, ETL success, ClickHouse health, and LLM/tool latencies." data-why="SLOs and alerting for the whole pipeline.">
+        <rect x="32"  y="408" width="220" height="70" class="box"/>
+        <text x="48" y="432" class="t">Prometheus + Grafana</text><text x="48" y="452" class="s">Pipelines • CH • LLM SLOs</text>
+      </g>
+
+      <!-- Z2 components -->
+      <g class="tile" data-title="Lovable Frontend" data-body="Operator UI and Copilot chat. Calls Insights API using a Supabase‑issued JWT." data-why="No data logic in the browser; it simply visualizes secure aggregates.">
+        <rect x="872" y="128" width="276" height="90" class="box2"/>
+        <text x="888" y="154" class="t">Lovable Frontend</text><text x="888" y="174" class="s">Ops UI • Copilot Chat</text>
+      </g>
+
+      <g class="tile" data-title="Supabase" data-body="Auth, users, orgs, roles, saved views/alerts metadata. Optionally emits webhooks to Insights API." data-why="Central identity & RBAC without touching raw telemetry.">
+        <rect x="872" y="252" width="276" height="90" class="box2"/>
+        <text x="888" y="278" class="t">Supabase</text><text x="888" y="298" class="s">Auth • Users • Saved Views</text>
+      </g>
+
+      <!-- Flows (blue ingest) -->
+      <path d="M252 127 L280 127" class="arrow"/>
+      <path d="M510 122 L540 122" class="arrow"/>
+      <path d="M395 170 L142 192" class="arrow"/>   <!-- Kafka -> MinIO -->
+      <path d="M395 170 L540 210" class="arrow"/>   <!-- Kafka -> CH -->
+      <path d="M395 232 L540 232" class="arrow"/>   <!-- Airflow -> CH KPIs -->
+      <path d="M142 270 L280 230" class="arrow"/>   <!-- MinIO -> Airflow -->
+
+      <!-- Green serve to app -->
+      <path d="M678 458 L678 410" class="arrowg"/>  <!-- CH -> LLM -->
+      <path d="M816 494 L872 494" class="arrowg"/>  <!-- Insights -> App Zone -->
+      <path d="M1010 220 L816 494" class="arrowg"/> <!-- Lovable -> Insights -->
+      <path d="M1010 297 L816 494" class="arrowg"/> <!-- Supabase -> Insights (JWT/webhooks) -->
+
+      <!-- Internals to LLM -->
+      <path d="M395 335 L540 355" class="arrowi"/>   <!-- Feast -> LLM -->
+      <path d="M252 355 L540 355" class="arrowi"/>   <!-- Vector -> LLM -->
+    </svg>
+    <div class="hr"></div>
+    <div class="small">Tip: Click a tile to pin the tooltip. Click outside to dismiss.</div>
+  </section>
+
+</main>
+
+<div id="tooltip" class="tooltip" role="dialog" aria-live="polite"></div>
+
+<script>
+(function(){
+  const tip = document.getElementById('tooltip');
+  let pinned = false;
+
+  function showTip(evt, title, body, why){
+    tip.innerHTML = `<b>${title}</b><div class="muted" style="margin-top:4px">${body}</div>` + (why? `<div class="why" style="margin-top:6px">Why: ${why}</div>` : '' ) + `<div class="hint">Click to pin/unpin</div>`;
+    const x = evt.clientX, y = evt.clientY;
+    tip.style.left = x + 'px';
+    tip.style.top  = y + 'px';
+    tip.style.display = 'block';
+  }
+  function hideTip(){
+    if(!pinned){ tip.style.display = 'none'; }
+  }
+  document.querySelectorAll('.tile').forEach(g => {
+    const title = g.getAttribute('data-title');
+    const body  = g.getAttribute('data-body');
+    const why   = g.getAttribute('data-why');
+    g.addEventListener('mousemove', (e)=>{ if(!pinned) showTip(e, title, body, why); });
+    g.addEventListener('mouseenter', (e)=>{ if(!pinned) showTip(e, title, body, why); });
+    g.addEventListener('mouseleave', hideTip);
+    g.addEventListener('click', (e)=>{
+      pinned = !pinned;
+      if(pinned){ showTip(e, title, body, why); }
+      else { hideTip(); }
+      e.stopPropagation();
+    });
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.tile')){ pinned=false; hideTip(); }
+  });
+})();
+</script>
+
+</body>
+</html>
+"""
+path = "/mnt/data/energy_app_arch_streaming_tooltips.html"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(html)
+path
