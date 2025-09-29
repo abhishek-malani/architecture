@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lead Scoring – DigitalOcean Architecture</title>
+  <meta name="description" content="DigitalOcean-only architecture for an async lead-scoring service with interactive tooltips and clear zone segregation." />
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #111a2b;
+      --card: #0f172a;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --border: #1f2a44;
+      /* flow colors (also duplicated as hex in Mermaid linkStyle) */
+      --c-upload: #60a5fa;   /* blue */
+      --c-db: #34d399;       /* green */
+      --c-proc: #a78bfa;     /* purple */
+      --c-note: #f59e0b;     /* orange */
+    }
+    html, body { height: 100%; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background: radial-gradient(1200px 800px at 20% 0%, #0d1628 0%, var(--bg) 45%, #070d18 100%); color: var(--text); }
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:16px; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px; }
+    h1 { font-size: clamp(20px, 2.6vw, 28px); margin: 0; letter-spacing: 0.2px; }
+    .sub { color: var(--muted); font-size: 14px; }
+    .card { background: var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; }
+    .card h3 { margin: 0 0 8px 0; font-size: 16px; }
+    .legend { display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 0; }
+    .pill { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; border:1px solid var(--border); background:#0d213d; font-size:12px; color:#cbd5e1; }
+    .dot { inline-size:10px; block-size:10px; border-radius:50%; }
+    .u  { background: var(--c-upload); }
+    .p  { background: var(--c-proc); }
+    .d  { background: var(--c-db); }
+    .n  { background: var(--c-note); }
+    .why { display:grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin-top:16px; }
+    .why .w { position:relative; padding:12px; border:1px solid var(--border); border-radius:12px; background: linear-gradient(180deg, #0d1628, var(--panel)); }
+    .why .w h4 { margin:0 0 6px 0; font-size:14px; }
+    .why .w p { margin:0; color: var(--muted); font-size:13px; }
+    .why .w .tt { text-decoration: underline dotted; cursor: help; }
+    .muted { color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+    footer { margin-top: 20px; text-align:center; color: var(--muted); font-size: 12px; }
+  </style>
+  <!-- Mermaid v10 (diagram builds client-side). Avoid emojis/HTML in node labels to prevent parse errors. -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+  </script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Lead Scoring – DigitalOcean Architecture</h1>
+        <div class="sub">Hover or click tiles for details. FastAPI + DO Spaces + Managed MongoDB + Email API. Async processing via cron + worker pool.</div>
+        <div class="legend">
+          <span class="pill"><span class="dot u"></span>Upload Flow (Blue)</span>
+          <span class="pill"><span class="dot p"></span>Processing Flow (Purple)</span>
+          <span class="pill"><span class="dot n"></span>Notification Flow (Orange)</span>
+          <span class="pill"><span class="dot d"></span>Status Check Flow (Green)</span>
+        </div>
+      </div>
+      <span class="pill">v2.1</span>
+    </header>
+
+    <section class="card">
+      <h3>Architecture Overview (Two Zones)</h3>
+      <div class="muted">Z1: Client Zone • Z2: DigitalOcean Infrastructure Zone</div>
+      <div class="mermaid">
+        flowchart TD
+          %% ---------- ZONE 1: CLIENT ZONE ----------
+          subgraph Z1["Z1 · Client Zone"]
+            USER["👤 User Browser"]
+            UPLOAD["📤 CSV Upload<br/>Pre-signed PUT"]
+            STATUS["📊 Status Check<br/>GET /status/{id}"]
+          end
+
+          %% ---------- ZONE 2: DIGITALOCEAN INFRASTRUCTURE ----------
+          subgraph Z2["Z2 · DigitalOcean Infrastructure"]
+            
+            %% API Layer
+            subgraph API_LAYER["🌐 API Layer"]
+              FASTAPI["🚀 FastAPI<br/>App Platform<br/>/upload-url, /submit, /status"]
+            end
+            
+            %% Storage Layer
+            subgraph STORAGE_LAYER["💾 Storage Layer"]
+              SPACES[("☁️ DO Spaces<br/>Raw & Scored CSVs<br/>S3-compatible")]
+              MONGODB[("🗄️ MongoDB<br/>Job Queue & Status<br/>Lease-based claiming")]
+            end
+            
+            %% Processing Layer
+            subgraph PROCESSING_LAYER["⚙️ Processing Layer"]
+              CRON["⏰ Cron Scheduler<br/>5-min intervals<br/>Job claiming"]
+              WORKERS["🤖 ML Worker Pool<br/>N ≤ 4 parallel<br/>Lead scoring"]
+            end
+            
+            %% Notification Layer
+            subgraph NOTIFICATION_LAYER["📬 Notification Layer"]
+              EMAIL["📧 Email API<br/>Resend/Postmark<br/>7-day signed links"]
+              TELEGRAM["📱 Telegram<br/>Alerts & Monitoring"]
+            end
+          end
+
+          %% ---------- DATA FLOW CONNECTIONS ----------
+          %% Upload Flow (Blue)
+          USER -->|"1. Upload CSV"| UPLOAD
+          UPLOAD -->|"2. PUT to Spaces"| SPACES
+          UPLOAD -->|"3. Submit Job"| FASTAPI
+          FASTAPI -->|"4. Create Job"| MONGODB
+          
+          %% Processing Flow (Purple)
+          CRON -->|"5. Claim Jobs"| MONGODB
+          CRON -->|"6. Spawn Workers"| WORKERS
+          WORKERS -->|"7. Download CSV"| SPACES
+          WORKERS -->|"8. Score & Process"| WORKERS
+          WORKERS -->|"9. Upload Results"| SPACES
+          WORKERS -->|"10. Update Status"| MONGODB
+          
+          %% Notification Flow (Orange)
+          WORKERS -->|"11. Send Email"| EMAIL
+          WORKERS -->|"12. Send Alert"| TELEGRAM
+          
+          %% Status Check Flow (Green)
+          USER -->|"13. Check Status"| STATUS
+          STATUS -->|"14. Query API"| FASTAPI
+          FASTAPI -->|"15. Read Status"| MONGODB
+
+          %% ---------- STYLING ----------
+          %% Zone styling
+          classDef zone1 fill:#1e3a8a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
+          classDef zone2 fill:#0f172a,stroke:#64748b,stroke-width:2px,color:#e2e8f0
+          classDef layer fill:#1f2937,stroke:#4b5563,stroke-width:1px,color:#d1d5db
+          
+          %% Apply styles
+          class Z1 zone1
+          class Z2 zone2
+          class API_LAYER,STORAGE_LAYER,PROCESSING_LAYER,NOTIFICATION_LAYER layer
+          
+          %% ---------- EDGE COLOR CODING ----------
+          %% Upload Flow (Blue) - Steps 1-4
+          linkStyle 0 stroke:#60a5fa,stroke-width:3px
+          linkStyle 1 stroke:#60a5fa,stroke-width:3px
+          linkStyle 2 stroke:#60a5fa,stroke-width:3px
+          linkStyle 3 stroke:#60a5fa,stroke-width:3px
+          
+          %% Processing Flow (Purple) - Steps 5-10
+          linkStyle 4 stroke:#a78bfa,stroke-width:3px
+          linkStyle 5 stroke:#a78bfa,stroke-width:3px
+          linkStyle 6 stroke:#a78bfa,stroke-width:3px
+          linkStyle 7 stroke:#a78bfa,stroke-width:3px
+          linkStyle 8 stroke:#a78bfa,stroke-width:3px
+          linkStyle 9 stroke:#a78bfa,stroke-width:3px
+          
+          %% Notification Flow (Orange) - Steps 11-12
+          linkStyle 10 stroke:#f59e0b,stroke-width:3px
+          linkStyle 11 stroke:#f59e0b,stroke-width:3px
+          
+          %% Status Check Flow (Green) - Steps 13-15
+          linkStyle 12 stroke:#34d399,stroke-width:3px
+          linkStyle 13 stroke:#34d399,stroke-width:3px
+          linkStyle 14 stroke:#34d399,stroke-width:3px
+        </div>
+    </section>
+
+    <section class="why">
+      <div class="w" title="🌐 API Layer: Hosts minimal UI and APIs. Issues pre‑signed PUT URLs so large files bypass the server. Records jobs and exposes /status endpoints for real-time monitoring.">
+        <h4>🚀 FastAPI on App Platform</h4>
+        <p>Simple deploy; env vars & secrets via DO; minimal ops overhead.</p>
+      </div>
+      <div class="w" title="💾 Storage Layer: S3‑compatible object storage for raw and scored CSVs. Pre‑signed links for secure, time‑limited upload/download. Immutable raw data with replay capability.">
+        <h4>☁️ DO Spaces</h4>
+        <p>Cheap storage; CDN‑ready if needed later; S3-compatible API.</p>
+      </div>
+      <div class="w" title="💾 Storage Layer: Single jobs collection with fields: status, attempts, next_try_at, lease_expires_at, heartbeat, output_key, error_msg. Lease-based claiming prevents race conditions.">
+        <h4>🗄️ Managed MongoDB</h4>
+        <p>Leases + backoff = safe claiming without an external queue.</p>
+      </div>
+      <div class="w" title="⚙️ Processing Layer: Every 5 min: atomically claim up to N jobs via findOneAndUpdate; spawn pool workers; heartbeat & lease expiry recover crashes. Parallel processing with resource limits.">
+        <h4>⏰ Cron + ML Worker Pool</h4>
+        <p>N ≤ 4 parallel workers, each job < 60s timeout.</p>
+      </div>
+      <div class="w" title="📬 Notification Layer: Use Resend/Postmark HTTP APIs (DO blocks SMTP). Verify domain once and send transactional emails with a 7‑day signed link. Reliable delivery with retry logic.">
+        <h4>📧 Email API</h4>
+        <p>Transactional messages; no SMTP headaches; signed links.</p>
+      </div>
+      <div class="w" title="📬 Notification Layer: Optional: brief success/failure messages with row counts and durations. Avoid PII in alerts. Quick visibility on failures or completions for ops team.">
+        <h4>📱 Telegram Alerts</h4>
+        <p>Quick visibility on failures or completions; ops monitoring.</p>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:16px;">
+      <h3>Flow Summary</h3>
+      <div class="muted">Tip: Click a tile above to pin the tooltip. Click outside to dismiss.</div>
+      <ol style="margin:0; padding-left:20px;">
+        <li><b>🔵 Upload Flow</b>: User uploads CSV to DO Spaces via pre-signed URL, then submits job to FastAPI.</li>
+        <li><b>🟣 Processing Flow</b>: Cron scheduler claims jobs, spawns ML workers to download, score, and upload results.</li>
+        <li><b>🟠 Notification Flow</b>: Workers send email with signed download link and optional Telegram alerts.</li>
+        <li><b>🟢 Status Check Flow</b>: User checks job status via API, which reads from MongoDB.</li>
+      </ol>
+    </section>
+
+    <footer>
+      Interactive architecture diagram with zone segregation and tooltips. Single HTML file; drop into GitHub Pages. Diagram uses Mermaid 10 with zone-based styling.
+    </footer>
+  </div>
+</body>
+</html>
