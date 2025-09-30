@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Energy App Cost Calculator — Pilot (OpenAI API, no GPU)</title>
+<style>
+  body{margin:0;font:14px/1.6 ui-sans-serif,system-ui,Segoe UI,Roboto,Inter,Arial;background:#0b1220;color:#e5e7eb}
+  header{padding:22px;background:#111827;border-bottom:1px solid #1f2937}
+  h1{margin:0 0 6px;font-size:22px}
+  .sub{color:#94a3b8;font-size:13px}
+  .wrap{max-width:1200px;margin:0 auto;padding:18px}
+  .card{background:#0e1629;border:1px solid #1f2937;border-radius:14px;padding:14px;margin:14px 0}
+  .grid{display:grid;gap:14px}
+  @media(min-width:1000px){.grid-2{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:1fr 1fr 1fr}}
+  h2{margin:6px 0 8px;font-size:18px}
+  h3{margin:8px 0 6px;font-size:16px}
+  .row{display:grid;grid-template-columns:1.2fr .8fr;gap:8px;align-items:center;margin:6px 0}
+  .row label{color:#94a3b8;font-size:13px}
+  .row input[type="number"],.row select{width:100%;padding:6px 8px;background:#0b1324;border:1px solid #1f2b45;border-radius:8px;color:#e5e7eb}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{border-bottom:1px dashed #1f2b45;padding:8px;text-align:right;font-variant-numeric:tabular-nums}
+  th:first-child,td:first-child{text-align:left;color:#cbd5e1}
+  tfoot td{border-top:1px solid #1f2b45;font-weight:700}
+  .tot{font-size:22px;font-weight:800}
+  details{border:1px solid #1f2b45;border-radius:10px;padding:8px;background:#0b1324}
+  summary{cursor:pointer;color:#cde1ff}
+  .note{font-size:12px;color:#9ca3af;margin-top:6px}
+</style>
+</head>
+<body>
+<header class="wrap">
+  <h1>Energy App Cost Calculator — Pilot</h1>
+  <div class="sub">Kafka → S3/Spaces → ClickHouse → Airflow → Insights/LLM via <b>OpenAI API</b>. No GPUs. Edit assumptions below.</div>
+</header>
+
+<main class="wrap grid">
+
+  <!-- Workload inputs -->
+  <section class="card grid grid-3">
+    <div>
+      <h3>Kafka (per topic)</h3>
+      <div class="row"><label>Partitions (≈ subsystems)</label><input id="partitions" type="number" value="10" min="1" step="1"/></div>
+      <div class="row"><label>Data in (GB/mo)</label><input id="k_in" type="number" value="100" min="0" step="10"/></div>
+      <div class="row"><label>Data out (GB/mo)</label><input id="k_out" type="number" value="200" min="0" step="10"/></div>
+    </div>
+    <div>
+      <h3>Object Storage (raw)</h3>
+      <div class="row"><label>Stored (TB)</label><input id="obj_tb" type="number" value="2" min="0" step="0.25"/></div>
+      <div class="row"><label>Egress (GB/mo)</label><input id="obj_egr" type="number" value="50" min="0" step="10"/></div>
+    </div>
+    <div>
+      <h3>OpenAI API usage</h3>
+      <div class="row"><label>Requests / month</label><input id="oa_calls" type="number" value="3000" min="0" step="100"/></div>
+      <div class="row"><label>Input tokens / call</label><input id="oa_in_tok" type="number" value="1500" min="0" step="100"/></div>
+      <div class="row"><label>Output tokens / call</label><input id="oa_out_tok" type="number" value="600" min="0" step="100"/></div>
+    </div>
+  </section>
+
+  <!-- Price assumptions -->
+  <section class="card">
+    <details open>
+      <summary>Price assumptions (editable)</summary>
+      <div class="grid grid-3" style="margin-top:8px">
+        <div>
+          <h3>AWS (UAE where possible)</h3>
+          <div class="row"><label>MSK Serverless — cluster $/hr</label><input id="aws_msk_cluster_hr" type="number" value="0.75" step="0.01"/></div>
+          <div class="row"><label>MSK Serverless — partition $/hr</label><input id="aws_msk_part_hr" type="number" value="0.0015" step="0.0001"/></div>
+          <div class="row"><label>MSK — data in $/GB</label><input id="aws_msk_in_gb" type="number" value="0.10" step="0.01"/></div>
+          <div class="row"><label>MSK — data out $/GB</label><input id="aws_msk_out_gb" type="number" value="0.05" step="0.01"/></div>
+          <div class="row"><label>S3 Standard $/GB-mo</label><input id="aws_s3_gb" type="number" value="0.027" step="0.001"/></div>
+          <div class="row"><label>EC2 i4i.large $/hr (CH node)</label><input id="aws_i4i_l_hr" type="number" value="0.172" step="0.001"/></div>
+          <div class="row"><label>EC2 i4i.xlarge $/hr (CH node)</label><input id="aws_i4i_x_hr" type="number" value="0.343" step="0.001"/></div>
+          <div class="row"><label>MWAA (Airflow) $/hr</label><input id="aws_mwaa_hr" type="number" value="0.49" step="0.01"/></div>
+          <div class="row"><label>FastAPI server $/hr (t3.small)</label><input id="aws_fastapi_hr" type="number" value="0.023" step="0.001"/></div>
+          <div class="row"><label>Monitoring $/hr (t3.large)</label><input id="aws_mon_hr" type="number" value="0.0832" step="0.001"/></div>
+          <div class="row"><label>NAT GW $/hr</label><input id="aws_nat_hr" type="number" value="0.045" step="0.001"/></div>
+          <div class="row"><label>NAT data $/GB</label><input id="aws_nat_gb" type="number" value="0.045" step="0.001"/></div>
+          <div class="row"><label>NAT data processed (GB/mo)</label><input id="aws_nat_data" type="number" value="0" step="10"/></div>
+        </div>
+        <div>
+          <h3>DigitalOcean (nearest regions)</h3>
+          <div class="row"><label>Managed Kafka — plan $/mo</label>
+            <select id="do_kafka_tier">
+              <option value="180">Production ($180/mo)</option>
+              <option value="30">Startup ($30/mo)</option>
+              <option value="15">Basic ($15/mo)</option>
+            </select>
+          </div>
+          <div class="row"><label>Spaces base (incl. 250GiB + 1TiB egr) $/mo</label><input id="do_spaces_base" type="number" value="5" step="1"/></div>
+          <div class="row"><label>Spaces extra storage $/GB-mo</label><input id="do_spaces_gb" type="number" value="0.02" step="0.001"/></div>
+          <div class="row"><label>Spaces extra egress $/GB</label><input id="do_spaces_eg_gb" type="number" value="0.01" step="0.001"/></div>
+          <div class="row"><label>CH node 4vCPU/32GB $/mo</label><input id="do_ch4_mo" type="number" value="262" step="1"/></div>
+          <div class="row"><label>CH node 8vCPU/64GB $/mo</label><input id="do_ch8_mo" type="number" value="524" step="1"/></div>
+          <div class="row"><label>DOKS control plane $/mo</label><input id="do_doks_cp" type="number" value="12" step="1"/></div>
+          <div class="row"><label>Airflow workers (count × $24/mo)</label><input id="do_air_workers" type="number" value="2" min="0" step="1"/></div>
+          <div class="row"><label>FastAPI droplet $/mo (1–2vCPU)</label><input id="do_fastapi_mo" type="number" value="12" step="1"/></div>
+          <div class="row"><label>Monitoring droplet $/mo</label><input id="do_mon_mo" type="number" value="24" step="1"/></div>
+        </div>
+        <div>
+          <h3>OpenAI pricing (edit to your model)</h3>
+          <div class="row"><label>Input $ / 1K tokens</label><input id="oa_in_price" type="number" value="0.005" step="0.001"/></div>
+          <div class="row"><label>Output $ / 1K tokens</label><input id="oa_out_price" type="number" value="0.015" step="0.001"/></div>
+          <div class="note">Use your model’s current prices. This calculator multiplies: (calls × tokens) ÷ 1000 × unit price.</div>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- Results -->
+  <section class="card grid grid-2">
+    <div>
+      <h2>AWS (UAE)</h2>
+      <table id="tbl_aws">
+        <thead><tr><th>Component</th><th>Monthly $</th></tr></thead>
+        <tbody></tbody>
+        <tfoot><tr><td>Total</td><td id="aws_total" class="tot">$0</td></tr></tfoot>
+      </table>
+      <div class="note">Tip: Use VPC Endpoints (S3) to avoid NAT data charges. Consider MSK Provisioned if steady load.</div>
+    </div>
+    <div>
+      <h2>DigitalOcean (nearest)</h2>
+      <table id="tbl_do">
+        <thead><tr><th>Component</th><th>Monthly $</th></tr></thead>
+        <tbody></tbody>
+        <tfoot><tr><td>Total</td><td id="do_total" class="tot">$0</td></tr></tfoot>
+      </table>
+      <div class="note">Spaces includes 1 TiB egress; nearest regions: BLR1 / SGP1 / FRA1.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Shared (OpenAI API)</h2>
+    <table id="tbl_shared">
+      <thead><tr><th>Component</th><th>Monthly $</th></tr></thead>
+      <tbody></tbody>
+      <tfoot><tr><td>Total</td><td id="shared_total" class="tot">$0</td></tr></tfoot>
+    </table>
+    <div class="note">This applies regardless of AWS vs DigitalOcean since you’re calling OpenAI’s SaaS.</div>
+  </section>
+
+</main>
+
+<script>
+function $(id){return document.getElementById(id)}
+function fmt(n){return "$"+n.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,",")}
+function calc(){
+  const hrs=744;
+
+  // Workload
+  const partitions=+$("partitions").value;
+  const kIn=+$("k_in").value, kOut=+$("k_out").value;
+  const objTB=+$("obj_tb").value, objEgr=+$("obj_egr").value;
+
+  // AWS prices
+  const aws={
+    mskClusterHr:+$("aws_msk_cluster_hr").value,
+    mskPartHr:+$("aws_msk_part_hr").value,
+    mskIn:+$("aws_msk_in_gb").value,
+    mskOut:+$("aws_msk_out_gb").value,
+    s3:+$("aws_s3_gb").value,
+    i4iL:+$("aws_i4i_l_hr").value,
+    i4iX:+$("aws_i4i_x_hr").value,
+    mwaaHr:+$("aws_mwaa_hr").value,
+    fastapiHr:+$("aws_fastapi_hr").value,
+    monHr:+$("aws_mon_hr").value,
+    natHr:+$("aws_nat_hr").value,
+    natGb:+$("aws_nat_gb").value,
+    natData:+$("aws_nat_data").value
+  };
+
+  // DO prices
+  const dop={
+    kafka:+$("do_kafka_tier").value,
+    spacesBase:+$("do_spaces_base").value,
+    spacesGb:+$("do_spaces_gb").value,
+    spacesEg:+$("do_spaces_eg_gb").value,
+    ch4:+$("do_ch4_mo").value,
+    ch8:+$("do_ch8_mo").value,
+    doks:+$("do_doks_cp").value,
+    airWorkers:+$("do_air_workers").value,
+    fastapi:+$("do_fastapi_mo").value,
+    mon:+$("do_mon_mo").value
+  };
+
+  // OpenAI
+  const oaCalls=+$("oa_calls").value;
+  const oaInTok=+$("oa_in_tok").value;
+  const oaOutTok=+$("oa_out_tok").value;
+  const oaInPrice=+$("oa_in_price").value;
+  const oaOutPrice=+$("oa_out_price").value;
+
+  // ---------- AWS ----------
+  let awsRows=[];
+
+  // MSK Serverless
+  const mskCluster=aws.mskClusterHr*hrs;
+  const mskParts=aws.mskPartHr*partitions*hrs;
+  const mskIn=aws.mskIn*kIn;
+  const mskOut=aws.mskOut*kOut;
+  awsRows.push(["MSK Serverless (cluster + parts + in/out)", mskCluster+mskParts+mskIn+mskOut]);
+
+  // S3 storage
+  const s3 = aws.s3*(objTB*1024);
+  awsRows.push(["S3 (raw storage)", s3]);
+
+  // ClickHouse ×3 (pick size via dropdown? Keep i4i.large as baseline)
+  const ch = aws.i4iL*hrs*3; // edit price above to simulate xlarge
+  awsRows.push(["EC2 ClickHouse ×3 (i4i.large)", ch]);
+
+  // Airflow (MWAA)
+  const mwaa = aws.mwaaHr*hrs;
+  awsRows.push(["MWAA (managed Airflow)", mwaa]);
+
+  // FastAPI server
+  const fastapi = aws.fastapiHr*hrs;
+  awsRows.push(["FastAPI (Insights/Tools) t3.small", fastapi]);
+
+  // Monitoring
+  const mon = aws.monHr*hrs;
+  awsRows.push(["Monitoring (t3.large)", mon]);
+
+  // NAT (optional)
+  const nat = aws.natHr*hrs + aws.natGb*aws.natData;
+  if(nat>0) awsRows.push(["NAT Gateway (hrs + data)", nat]);
+
+  const awsTotal = awsRows.reduce((a,[,v])=>a+v,0);
+
+  // ---------- DigitalOcean ----------
+  let doRows=[];
+
+  // Kafka
+  doRows.push(["Managed Kafka (tier)", dop.kafka]);
+
+  // Spaces storage
+  const totalGB=objTB*1024;
+  const extraGB=Math.max(0,totalGB-250);
+  const extraEg=Math.max(0,objEgr-1024);
+  const spaces = dop.spacesBase + extraGB*dop.spacesGb + extraEg*dop.spacesEg;
+  doRows.push(["Spaces (storage + egress bundle)", spaces]);
+
+  // ClickHouse ×3 (default 4vCPU nodes)
+  const chDo = dop.ch4*3;
+  doRows.push(["ClickHouse ×3 (4vCPU/32GB)", chDo]);
+
+  // Airflow on DOKS
+  const airflowDo = dop.doks + (dop.airWorkers*24);
+  doRows.push(["DOKS + Airflow workers", airflowDo]);
+
+  // FastAPI server
+  doRows.push(["FastAPI droplet", dop.fastapi]);
+
+  // Monitoring
+  doRows.push(["Monitoring droplet", dop.mon]);
+
+  const doTotal = doRows.reduce((a,[,v])=>a+v,0);
+
+  // ---------- OpenAI (shared) ----------
+  const oaInputCost  = (oaCalls * oaInTok  / 1000) * oaInPrice;
+  const oaOutputCost = (oaCalls * oaOutTok / 1000) * oaOutPrice;
+  const oaTotal = oaInputCost + oaOutputCost;
+  const sharedRows = [
+    ["OpenAI API — input tokens", oaInputCost],
+    ["OpenAI API — output tokens", oaOutputCost]
+  ];
+
+  // Render tables
+  const tbA=$("tbl_aws").querySelector("tbody");
+  const tbD=$("tbl_do").querySelector("tbody");
+  const tbS=$("tbl_shared").querySelector("tbody");
+  tbA.innerHTML = awsRows.map(r=>`<tr><td>${r[0]}</td><td>${fmt(r[1])}</td></tr>`).join("");
+  tbD.innerHTML = doRows.map(r=>`<tr><td>${r[0]}</td><td>${fmt(r[1])}</td></tr>`).join("");
+  tbS.innerHTML = sharedRows.map(r=>`<tr><td>${r[0]}</td><td>${fmt(r[1])}</td></tr>`).join("");
+
+  $("aws_total").textContent = fmt(awsTotal);
+  $("do_total").textContent  = fmt(doTotal);
+  $("shared_total").textContent = fmt(oaTotal);
+}
+document.querySelectorAll("input,select").forEach(el=>el.addEventListener("input",calc));
+window.addEventListener("load",calc);
+</script>
+</body>
+</html>
